@@ -306,15 +306,19 @@ Result downloadCubemap(vkHelper& _vulkan, const VkImage _srcImage, const char* _
 
 			Faces& faces = stagingBuffer[level];
 
+			uint32_t faceIds[] = { 0,1,2,3,4,5 };
+
 			for (uint32_t face = 0; face < 6u; face++)
 			{
+				//uint32_t faceId = 5;
+				uint32_t faceId = faceIds[face];
 				if (_vulkan.readBufferData(faces[face], imageData.data(), imageByteSize) != VK_SUCCESS)
 				{
 					return Result::VulkanError;
 				}
 
-				res = ktxImage.writeFace(imageData, face, level);
-
+				res = ktxImage.writeFace(imageData, faceId, level);
+			
 				if (res != Result::Success)
 				{
 					return res;

@@ -1,0 +1,123 @@
+2023.11.2
+    试一下用工具 将hdr转成flushengine支持的这个格式：
+        tiny_ktx_format = TKTX_R16G16B16A16_SFLOAT (97)
+
+        cmft不会用。。
+
+        glTF-IBL-Sampler
+
+            python .\update_glslang_sources.py
+            缺失disutils
+
+            安装pip
+            https://www.geeksforgeeks.org/how-to-install-pip-on-windows/
+
+            安装
+            https://www.geeksforgeeks.org/how-to-set-up-setuptools-for-python-on-windows/
+
+        submodule需要初始化
+            git submodule update --init
+
+            转成公司的科学上网，github clone 就比较顺畅了。
+        
+                clashX 代理
+                    地址：127.0.0.1  端口：7890
+                公司代理
+                    地址：192.168.0.1:88
+                        协议：http
+                        账号：hexin
+                        密码：hx300033
+
+            然后在根目录下面创建文件夹generatedProjects，
+                cd generatedProjects
+                cmake ../
+            这样Windows上就创建出来了solution和其他project文件。
+
+        使用glTF-IBL-Sampler报错：
+            Failed to open file pipeline.cache
+            Successfully loaded D:\ShareFolder\Images\environments\lightroom_14b.hdr 2048 x 1024 x 3
+            ERROR: Source entry point must be "main"
+            ERROR: 0:310: 'limitations' : inductive-loop condition requires the form "loop-index <comparison-op> constant-expression"
+            ERROR: 0:354: '' : compilation terminated
+            ERROR: 2 compilation errors.  No code generated.
+
+        下午原流程再走一遍。现在用公司的科学上网，应该不会影响git clone.
+            还是很费劲。。
+            这回弄出来了。可是FlushEngine读不了。可能是ktx2格式，Flushengine不支持。
+                tinyktx.h 的 TinyKtx_ReadHeader 函数里面报错
+                    if (memcmp(&ctx->header.identifier, TinyKtx_fileIdentifier, 12) != 0) {
+                        ctx->callbacks.errorFn(ctx->user, "Not a KTX file or corrupted as identified isn't valid");
+                        return false;
+
+            哈哈，用PVRTexTool把刚才那个ktx2打开，再另存为ktx格式，然后FlushEngine可以读取了！
+            
+            用同样的ktx文件给到filament
+                可是这个ktx跟filament生成的6个面的顺序不太一样。
+                看起来是有一个旋转了90度的关系。。
+
+                glTFIBLSampler的lib.cpp里面能够改顺序。我现在不知道生成顺序，但是 downloadCubemap 函数里面有指定某个face到ktx里面。在这里可以调一下顺序。
+                    先只绘制某一个标号面，这样就知道这个标号对应到最终结果的哪个面。
+                    
+                    不能这样做。因为按照某个朝向方向生成的6个面，换顺序并不能跟另一个朝向生成的6个面对等。比如从朝前变成朝后看的6个面，头顶上那个面位置是不动的，但是有一个旋转。
+                    
+                    所以应该是生成6个面的时候指定一下朝向。
+
+                    在这里：filter.frag的uvToXYZ函数里面指定了每个面的方向。
+                        vec3 uvToXYZ(int face, vec2 uv)
+                        {
+                            if(face == 0)
+                                return vec3(     1.f,   uv.y,    -uv.x);
+
+                            else if(face == 1)
+                                return vec3(    -1.f,   uv.y,     uv.x);
+
+                            else if(face == 2)
+                                return vec3(   +uv.x,   -1.f,    +uv.y);
+
+                            else if(face == 3)
+                                return vec3(   +uv.x,    1.f,    -uv.y);
+
+                            else if(face == 4)
+                                return vec3(   +uv.x,   uv.y,      1.f);
+
+                            else {//if(face == 5)
+                                return vec3(    -uv.x,  +uv.y,     -1.f);}
+                        }
+                    从y轴上方看向-y轴，逆时针方向，包围y轴的4个面分别是0,5,1,4
+                    结果就是要让观察者绕y轴逆时针转90度。不应该改uvToXYZ,所以就是改采样方向。让采样方向旋转90度。
+                    R(y轴转90度矩阵)*(x,y,z) = (z,y,-x)
+                    其实我也有点不太确定要转90还是-90，先试一下这个，不行就改成-90也就是(-z,y,x)
+
+                    改这采样的地方的方向，在filter.frag的panoramaToCubeMap函数里面：
+                        vec3 direction = normalize(scan);
+
+                        vec3 dir_rot90_y = vec3(direction.z, direction.y, -direction.x);
+                    
+                        vec2 src = dirToUV(dir_rot90_y);		
+                            
+                        writeFace(face, texture(uPanorama, src).rgb);
+
+
+                    然后重编 glTFIBLSampler ，运行cli
+                    D:\tools\IBL_Tools\glTF-IBL-Sampler\glTF-IBL-Sampler\Debug> .\cli.exe -inputPath D:\ShareFolder\Images\environments/lightroom_14b.hdr -outCubeMap D:\ShareFolder\Images\environments\lightroom_rot90_y.ktx2 -distribution GGX -sampleCount 1024 -targetFormat R16G16B16A16_SFLOAT
+
+                    用PVRTexTool打开看，跟filament cmgen生成的结果一致了！！！
+
+        这里的RGBA16F，或者RGBA32F, 应该就是以前海华说的RGBA32F。在云音乐的时候我一直不知道怎么才能生成RGBA32F. 用这个ktx应该能让filament渲染效果上一个层次。
+
+        直接给filament使用，结果黑的。。貌似有问题。
+            Requested linear format but KTX contains a sRGB format.
+            Requested linear format but KTX contains a sRGB format.
+            The face m0_px.rgb32f does not exist
+
+            IBL::loadFromDirectory
+                if (loadFromKtx(Path::concat(path, path.getName()))) {
+                这个返回了false
+
+                bool Ktx1Bundle::getSphericalHarmonics(filament::math::float3* result) {
+                    char const* src = getMetadata("sh");
+                    没有sh 参数。应该直接从sh.txt里面读，因为这个不是cmgen生成的，不会带sh metadata进去。或者我改一下 glTFIBLSampler 的代码，生成ktx的时候也把sh带进去。
+
+                    先读取外部的sh文件。
+
+                结果出来了！跟原来的区别不大（虽然有一丁点区别能看出来原来的skybox比较模糊，但rockboy看起来没什么区别）。。 可能这个模型太简单了，看不太出来区别。。

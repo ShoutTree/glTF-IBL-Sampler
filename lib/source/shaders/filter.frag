@@ -453,9 +453,11 @@ void panoramaToCubeMap()
 	{		
 		vec3 scan = uvToXYZ(face, inUV*2.0-1.0);		
 			
-		vec3 direction = normalize(scan);		
-	
-		vec2 src = dirToUV(direction);		
+        vec3 direction = normalize(scan);
+
+        vec3 dir_rot90_y = vec3(direction.z, direction.y, -direction.x);
+
+		vec2 src = dirToUV(dir_rot90_y);		
 			
 		writeFace(face, texture(uPanorama, src).rgb);
 	}
